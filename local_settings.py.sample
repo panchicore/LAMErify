@@ -1,0 +1,6 @@
+SITE_URL = 'http://localhost:5000'
+STATIC_URL = SITE_URL + '/download/%s'
+
+AWS_BUCKET_ID = 'XXX'
+AWS_ACCESS_KEY_ID = 'YYY'
+AWS_SECRET_ACCESS_KEY = 'ZZZ'
