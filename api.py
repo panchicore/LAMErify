@@ -2,6 +2,7 @@ import os
 import boto
 import settings
 import urllib
+from decorators import require_apikey
 from werkzeug.utils import secure_filename
 from flask import Flask, send_from_directory
 from flask.ext import restful
@@ -12,7 +13,7 @@ from datetime import datetime
 app = Flask(__name__)
 
 api = restful.Api(app)
-app.debug = True
+app.debug = settings.DEBUG
 
 @app.route("/")
 def main():
@@ -30,10 +31,14 @@ class Encoder(restful.Resource):
         self.parser.add_argument('callback_url', type=str, location='form',
                                  required=True,
                                  help="callback_url param needed, where you will be notified about the enconding task?")
-        self.parser.add_argument('aws_upload', type=int, required=False, default=0)
-        self.parser.add_argument('aws_access_key_id', type=str, required=False, default=settings.AWS_ACCESS_KEY_ID)
-        self.parser.add_argument('aws_secret_access_key', type=str, required=False, default=settings.AWS_SECRET_ACCESS_KEY)
-        self.parser.add_argument('aws_bucket', type=str, required=False, default=settings.AWS_BUCKET_ID)
+        self.parser.add_argument('aws_upload', type=int, required=False,
+                                 default=0)
+        self.parser.add_argument('aws_access_key_id', type=str, required=False,
+                                 default=settings.AWS_ACCESS_KEY_ID)
+        self.parser.add_argument('aws_secret_access_key', type=str,
+                                 required=False, default=settings.AWS_SECRET_ACCESS_KEY)
+        self.parser.add_argument('aws_bucket', type=str, required=False,
+                                 default=settings.AWS_BUCKET_ID)
 
     def post(self):
         args = self.parser.parse_args()
@@ -60,7 +65,8 @@ class Encoder(restful.Resource):
         call(["lame", file_path_from, file_path_to, "-b 64"])
         os.remove(file_path_from)
 
-        args['result_download_url'] = settings.STATIC_URL % file_name_to
+        response = {'key': key,
+                    'result_download_url': settings.STATIC_URL % file_name_to}
 
         # upload to S3
         if aws_upload:
@@ -82,12 +88,14 @@ class Encoder(restful.Resource):
                 'Cache-Control': 'max-age=86400',
             }
 
-            key.set_contents_from_file(upload_file, headers=AWS_HEADERS, replace=True, cb=None, num_cb=10, policy=None, md5=None)
-            args['aws_s3_url'] = 'https://s3.amazonaws.com/{0}/{1}'.format(
+            key.set_contents_from_file(upload_file, headers=AWS_HEADERS,
+                                       replace=True, cb=None, num_cb=10,
+                                       policy=None, md5=None)
+            response['aws_s3_url'] = 'https://s3.amazonaws.com/{0}/{1}'.format(
                 aws_bucket, bucket_path
             )
 
-        return args, 200
+        return response, 200
 
 
 class Download(restful.Resource):
