@@ -111,4 +111,4 @@ api.add_resource(Encoder, '/encoder')
 api.add_resource(Download, '/download/<filename>')
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=settings.DEBUG)
+    app.run(host='0.0.0.0', port=settings.PORT, debug=settings.DEBUG)
