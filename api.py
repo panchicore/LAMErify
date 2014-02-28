@@ -2,14 +2,12 @@ import os
 import boto
 import settings
 import urllib
-from decorators import require_apikey
 from werkzeug.utils import secure_filename
 from flask import Flask, send_from_directory
 from flask.ext import restful
 from flask.ext.restful import reqparse
 from subprocess import call
 from datetime import datetime
-
 from celery import Celery
 
 def make_celery(app):
@@ -34,6 +32,44 @@ app.config.update(
 )
 celery = make_celery(app)
 
+@celery.task(name="tasks.process_audio")
+def process_audio(download_url, file_path_from, file_path_to, aws_upload, aws_access_key_id, aws_secret_access_key, aws_bucket, bucket_path):
+
+    # download the original audio
+    print '1. downloading...'
+    local_filename, headers = urllib.urlretrieve(download_url, file_path_from)
+
+    # lame it to MP3 and remove the original file after conversion
+    print '2. encoding to mp3...'
+    call(["lame", file_path_from, file_path_to, "-b 64"])
+    os.remove(file_path_from)
+
+    # upload to S3
+    if aws_upload:
+        filename = secure_filename(file_path_to)
+        print filename
+        s3 = boto.connect_s3(
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key
+        )
+        bucket = s3.create_bucket(aws_bucket)
+        key = bucket.new_key(filename)
+
+        key.key = bucket_path
+        upload_file = open(file_path_to)
+
+        AWS_HEADERS = {
+            'x-amz-acl': 'public-read',
+            'Cache-Control': 'max-age=86400',
+        }
+
+        print '3. uloading to aws...'
+        key.set_contents_from_file(upload_file, headers=AWS_HEADERS,
+                                   replace=True, cb=None, num_cb=10,
+                                   policy=None, md5=None)
+
+    print '- end'
+    return True
 
 @app.route("/")
 def main():
@@ -78,42 +114,16 @@ class Encoder(restful.Resource):
         file_path_from = settings.STORAGE_FOLDER + file_name_from
         file_path_to = settings.STORAGE_FOLDER + file_name_to
 
-        local_filename, headers = urllib.urlretrieve(download_url,
-                                                     file_path_from)
-
-        # lame it to MP3 and remove the original file after conversion
-        call(["lame", file_path_from, file_path_to, "-b 64"])
-        os.remove(file_path_from)
-
         response = {'key': key,
                     'result_download_url': settings.STATIC_URL % file_name_to}
 
-        # upload to S3
-        if aws_upload:
-            filename = secure_filename(file_path_to)
-            print filename
-            s3 = boto.connect_s3(
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key
-            )
-            bucket = s3.create_bucket(aws_bucket)
-            key = bucket.new_key(filename)
-            t = datetime.today()
-            bucket_path = '{0}/{1}/{2}/{3}'.format(t.year, t.month, t.day, file_name_to)
-            key.key = bucket_path
-            upload_file = open(file_path_to)
+        t = datetime.today()
+        bucket_path = '{0}/{1}/{2}/{3}'.format(t.year, t.month, t.day, file_name_to)
+        response['aws_s3_url'] = 'https://s3.amazonaws.com/{0}/{1}'.format(
+            aws_bucket, bucket_path
+        )
 
-            AWS_HEADERS = {
-                'x-amz-acl': 'public-read',
-                'Cache-Control': 'max-age=86400',
-            }
-
-            key.set_contents_from_file(upload_file, headers=AWS_HEADERS,
-                                       replace=True, cb=None, num_cb=10,
-                                       policy=None, md5=None)
-            response['aws_s3_url'] = 'https://s3.amazonaws.com/{0}/{1}'.format(
-                aws_bucket, bucket_path
-            )
+        process_audio.delay(download_url, file_path_from, file_path_to, aws_upload, aws_access_key_id, aws_secret_access_key, aws_bucket, bucket_path)
 
         return response, 200
 
